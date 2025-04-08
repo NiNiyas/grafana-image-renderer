@@ -11,7 +11,14 @@ ENV XDG_CACHE_HOME=/tmp/.chromium
 WORKDIR /usr/src/app
 
 RUN apk --no-cache upgrade && \
-    apk add --no-cache udev ttf-opensans unifont chromium ca-certificates dumb-init && \
+    apk add --no-cache udev ttf-opensans unifont chromium chromium-swiftshader ca-certificates dumb-init && \
+    # Remove NPM-related files and directories
+    rm -rf /usr/local/lib/node_modules/npm && \
+    rm -rf /usr/local/bin/npm && \
+    rm -rf /usr/local/bin/npx && \
+    rm -rf /root/.npm && \
+    rm -rf /root/.node-gyp && \
+    # Clean up
     rm -rf /tmp/*
 
 # Build stage
