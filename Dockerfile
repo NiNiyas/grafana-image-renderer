@@ -10,8 +10,11 @@ ENV XDG_CACHE_HOME=/tmp/.chromium
 
 WORKDIR /usr/src/app
 
+# We use edge for Chromium to get the latest release.
+# Can be back to stable when 3.22 gets .103.
 RUN apk --no-cache upgrade && \
-    apk add --no-cache udev ttf-opensans unifont chromium chromium-swiftshader ca-certificates dumb-init && \
+    apk add --no-cache udev ttf-opensans unifont ca-certificates dumb-init && \
+    apk add --no-cache chromium chromium-swiftshader --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community && \
     # Remove NPM-related files and directories
     rm -rf /usr/local/lib/node_modules/npm && \
     rm -rf /usr/local/bin/npm && \
@@ -39,7 +42,7 @@ RUN yarn install --pure-lockfile --production
 FROM base
 
 LABEL maintainer="Grafana team <hello@grafana.com>"
-LABEL org.opencontainers.image.source="https://github.com/grafana/grafana-image-renderer"
+LABEL org.opencontainers.image.source="https://github.com/grafana/grafana-image-renderer/tree/master/Dockerfile"
 
 ARG GF_UID="472"
 ARG GF_GID="472"

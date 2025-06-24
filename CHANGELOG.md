@@ -1,3 +1,8 @@
+## 3.12.7 (2025-06-19)
+
+- Chore: Update base Docker image to latest (CVE-2025-5959), [#647](https://github.com/grafana/grafana-image-renderer/pull/647), [#648](https://github.com/grafana/grafana-image-renderer/pull/648), [macabu](https://github.com/macabu), [Proximyst](https://github.com/Proximyst)
+- Tracing: Add debug logs when verbose logging is enabled [#644](https://github.com/grafana/grafana-image-renderer/pull/644), [AgnesToulet](https://github.com/AgnesToulet)
+
 ## 3.12.6 (2025-05-23)
 
 - Chore: Upgrade multer 2.0.0 [#642](https://github.com/grafana/grafana-image-renderer/pull/642), [evictorero](https://github.com/evictorero)
