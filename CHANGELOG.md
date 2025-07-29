@@ -1,3 +1,31 @@
+## 4.0.9 (2025-07-28)
+
+- Docker: Use numeric UID, [#686](https://github.com/grafana/grafana-image-renderer/issues/686), [Proximyst](https://github.com/Proximyst)
+  - This fixes #686, which is useful for some Kubernetes users. It was reported by [@mhulscher](https://github.com/mhulscher). Thanks!
+  - The bug only manifests if you use `securityContext.runAsNonRoot` in your `Deployment`.
+
+## 4.0.8 (2025-07-28)
+
+- Docker: Include libnss3-tools, [#685](https://github.com/grafana/grafana-image-renderer/pull/685), [Proximyst](https://github.com/Proximyst), [roock](https://github.com/roock)
+  - This fixes #676 for edge-cases, reported by [@roock](https://github.com/roock).
+  - Thanks to [@roock](https://github.com/roock) for this fix.
+
+## 4.0.7 (2025-07-25)
+
+- Docker: Install locales and use en_US.UTF-8 to save non-ASCII files, [#683](https://github.com/grafana/grafana-image-renderer/pull/683), [macabu](https://github.com/macabu)
+  - This fixes #680
+
+## 4.0.6 (2025-07-24)
+
+- Docker: Update Chromium (CVE-2025-8010, CVE-2025-8011), [#682](https://github.com/grafana/grafana-image-renderer/pull/682), [macabu](https://github.com/macabu)
+
+## 4.0.5 (2025-07-23)
+
+- Docker: Use tini, [#678](https://github.com/grafana/grafana-image-renderer/pull/678), [Proximyst](https://github.com/Proximyst)
+  - This fixes #677, reported by [@mbentley](https://github.com/mbentley). Thanks!
+- Docker: Include ca-certificates package, [#679](https://github.com/grafana/grafana-image-renderer/pull/679), [Proximyst](https://github.com/Proximyst)
+  - This fixes #676, reported by [@roock](https://github.com/roock). Thanks!
+
 ## 4.0.1, 4.0.2, 4.0.3 & 4.0.4 (2025-07-22)
 
 This release only touches the build process of the plugin, as v4.0.0, .1, .2, and .3 did not release on the plugin catalog.
