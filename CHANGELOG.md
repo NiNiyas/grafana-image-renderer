@@ -1,3 +1,10 @@
+## 4.0.10 (2025-07-31)
+
+- Docker: Update Chromium (CVE-2025-8292), [#695](https://github.com/grafana/grafana-image-renderer/pull/695), [macabu](https://github.com/macabu)
+- Tests: Add Docker image test suite, [#693](https://github.com/grafana/grafana-image-renderer/pull/693), [Proximyst](https://github.com/Proximyst)
+- Docker: Inherit permissions from user, [#697](https://github.com/grafana/grafana-image-renderer/pull/697), [Proximyst](https://github.com/Proximyst)
+  - This fixes #694, which applies to RedHat OpenShift users. It was reported by [@mcapala](https://github.com/mcapala). Thanks!
+
 ## 4.0.9 (2025-07-28)
 
 - Docker: Use numeric UID, [#686](https://github.com/grafana/grafana-image-renderer/issues/686), [Proximyst](https://github.com/Proximyst)

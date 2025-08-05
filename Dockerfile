@@ -5,7 +5,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 # If we ever need to bust the cache, just change the date here.
 # While we don't cache anything in Drone, that might not be true when we migrate to GitHub Actions where some action might automatically enable layer caching.
 # This is fine, but is terrible in situations where we want to _force_ an update of a package.
-RUN echo 'cachebuster 2025-07-24' && apt-get update
+RUN echo 'cachebuster 2025-08-04' && apt-get update
 
 FROM debian-updated AS debs
 
@@ -62,11 +62,15 @@ COPY --from=build /src/proto proto
 COPY --from=build /src/default.json config.json
 COPY --from=build /src/plugin.json plugin.json
 
-EXPOSE 8081
+USER root
 
-# Simple regression test for: https://github.com/grafana/grafana-image-renderer/issues/686
-RUN test "$(id -u)" -eq 65532
+RUN chgrp -R 0 /home/nonroot && chmod -R g=u /home/nonroot
+
 USER 65532
+
+EXPOSE 8081
 
 ENTRYPOINT ["tini", "--", "/nodejs/bin/node"]
 CMD ["build/app.js", "server", "--config=config.json"]
+HEALTHCHECK --interval=10s --retries=3 --timeout=3s \
+    CMD ["wget", "-O-", "-q", "http://localhost:8081/"]
