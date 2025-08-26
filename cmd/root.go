@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/grafana/grafana-image-renderer/cmd/config"
+	"github.com/grafana/grafana-image-renderer/cmd/healthcheck"
 	"github.com/grafana/grafana-image-renderer/cmd/server"
 	"github.com/grafana/grafana-image-renderer/pkg/version"
 	"github.com/urfave/cli/v3"
@@ -17,9 +19,10 @@ func NewRootCmd() *cli.Command {
 		Version: version.ServiceVersion(),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:  "log-level",
-				Usage: "The minimum level to log at (enum: debug, info, warn, error)",
-				Value: "info",
+				Name:    "log-level",
+				Usage:   "The minimum level to log at (enum: debug, info, warn, error)",
+				Value:   "info",
+				Sources: config.FromConfig("log.level"),
 				Validator: func(s string) error {
 					if s != "debug" && s != "info" && s != "warn" && s != "error" {
 						return fmt.Errorf("invalid log level: %s", s)
@@ -47,6 +50,8 @@ func NewRootCmd() *cli.Command {
 			return ctx, nil
 		},
 		Commands: []*cli.Command{
+			config.NewCmd(),
+			healthcheck.NewCmd(),
 			server.NewCmd(),
 		},
 	}
