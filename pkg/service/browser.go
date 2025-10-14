@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,9 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/browser"
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -232,7 +235,8 @@ func (s *BrowserService) Render(ctx context.Context, url string, printer Printer
 
 	fileChan := make(chan []byte, 1) // buffered: we don't want the browser to stick around while we try to export this value.
 	actions := []chromedp.Action{
-		tracingAction("network.Enable", network.Enable()),
+		tracingAction("network.Enable", network.Enable()), // required by waitForReady
+		tracingAction("fetch.Enable", fetch.Enable()),     // required by handleNetworkEvents
 		tracingAction("SetPageScaleFactor", emulation.SetPageScaleFactor(cfg.PageScaleFactor)),
 		tracingAction("EmulateViewport", chromedp.EmulateViewport(int64(cfg.MinWidth), int64(cfg.MinHeight), orientation)),
 		setHeaders(browserCtx, cfg.Headers),
@@ -240,8 +244,8 @@ func (s *BrowserService) Render(ctx context.Context, url string, printer Printer
 		tracingAction("Navigate", chromedp.Navigate(url)),
 		tracingAction("WaitReady(body)", chromedp.WaitReady("body", chromedp.ByQuery)), // wait for a body to exist; this is when the page has started to actually render
 		scrollForElements(cfg.TimeBetweenScrolls),
-		waitForDuration(cfg.LoadWait),
-		waitForReady(browserCtx, cfg.ReadinessTimeout),
+		waitForDuration(cfg.ReadinessPriorWait),
+		waitForReady(browserCtx, cfg),
 		printer.prepare(cfg),
 		printer.action(fileChan, cfg),
 	}
@@ -392,6 +396,34 @@ func (s *BrowserService) handleNetworkEvents(browserCtx context.Context) {
 		// See the docs of ListenTarget for more.
 
 		switch e := ev.(type) {
+		case *fetch.EventRequestPaused:
+			go func() {
+				if sc := trace.SpanFromContext(browserCtx); sc != nil && sc.IsRecording() {
+					otel.GetTextMapPropagator().Inject(browserCtx, networkHeadersCarrier(e.Request.Headers))
+				}
+
+				hdrs := make([]*fetch.HeaderEntry, 0, len(e.Request.Headers))
+				for k, v := range e.Request.Headers {
+					hdrs = append(hdrs, &fetch.HeaderEntry{Name: k, Value: fmt.Sprintf("%v", v)})
+				}
+
+				ctx, span := tracer.Start(browserCtx, "fetch.ContinueRequest",
+					trace.WithAttributes(
+						attribute.String("requestID", string(e.RequestID)),
+						attribute.String("url", e.Request.URL),
+						attribute.String("method", e.Request.Method),
+						attribute.Int("headers", len(e.Request.Headers)),
+					))
+				defer span.End()
+				cdpCtx := chromedp.FromContext(browserCtx)
+				ctx = cdp.WithExecutor(ctx, cdpCtx.Target)
+
+				if err := fetch.ContinueRequest(e.RequestID).WithHeaders(hdrs).Do(ctx); err != nil {
+					span.SetStatus(codes.Error, err.Error())
+					slog.DebugContext(ctx, "failed to continue request", "requestID", e.RequestID, "error", err)
+				}
+			}()
+
 		case *network.EventRequestWillBeSent:
 			mu.Lock()
 			defer mu.Unlock()
@@ -414,17 +446,20 @@ func (s *BrowserService) handleNetworkEvents(browserCtx context.Context) {
 			if !ok {
 				return
 			}
+			statusText := e.Response.StatusText
+			if statusText == "" {
+				statusText = http.StatusText(int(e.Response.Status))
+			}
 			span.SetAttributes(
 				attribute.Int("status", int(e.Response.Status)),
-				attribute.String("statusText", e.Response.StatusText),
+				attribute.String("statusText", statusText),
 				attribute.String("mimeType", e.Response.MimeType),
 				attribute.String("protocol", e.Response.Protocol),
-				attribute.String("contentType", fmt.Sprintf("%v", e.Response.Headers["Content-Type"])),
 			)
 			if e.Response.Status >= 400 {
-				span.SetStatus(codes.Error, e.Response.StatusText)
+				span.SetStatus(codes.Error, fmt.Sprintf("%d %s", e.Response.Status, statusText))
 			} else {
-				span.SetStatus(codes.Ok, e.Response.StatusText)
+				span.SetStatus(codes.Ok, fmt.Sprintf("%d %s", e.Response.Status, statusText))
 			}
 			span.End(trace.WithTimestamp(e.Timestamp.Time()))
 			delete(requests, e.RequestID) // no point keeping it around anymore.
@@ -690,7 +725,7 @@ func (p *pngPrinter) prepare(cfg config.BrowserConfig) chromedp.Action {
 			}
 
 			span.SetStatus(codes.Ok, "viewport resized successfully")
-			if err := waitForReady(ctx, cfg.ReadinessTimeout).Do(ctx); err != nil {
+			if err := waitForReady(ctx, cfg).Do(ctx); err != nil {
 				return fmt.Errorf("failed to wait for readiness after resizing viewport: %w", err)
 			}
 		} else {
@@ -751,13 +786,6 @@ func NewPNGPrinter(opts ...PNGPrinterOption) (*pngPrinter, error) {
 }
 
 func setHeaders(browserCtx context.Context, headers network.Headers) chromedp.Action {
-	if sc := trace.SpanFromContext(browserCtx); sc != nil && sc.IsRecording() {
-		if headers == nil {
-			headers = make(network.Headers)
-		}
-		otel.GetTextMapPropagator().Inject(browserCtx, networkHeadersCarrier(headers))
-	}
-
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		tracer := tracer(ctx)
 		ctx, span := tracer.Start(ctx, "setHeaders",
@@ -842,7 +870,7 @@ func scrollForElements(timeBetweenScrolls time.Duration) chromedp.Action {
 	})
 }
 
-func waitForReady(browserCtx context.Context, timeout time.Duration) chromedp.Action {
+func waitForReady(browserCtx context.Context, cfg config.BrowserConfig) chromedp.Action {
 	getRunningQueries := func(ctx context.Context) (bool, error) {
 		var running bool
 		err := chromedp.Evaluate(`!!(window.__grafanaSceneContext && window.__grafanaRunningQueryCount > 0)`, &running).Do(ctx)
@@ -863,26 +891,35 @@ func waitForReady(browserCtx context.Context, timeout time.Duration) chromedp.Ac
 	requests := &atomic.Int64{}
 	lastRequest := &atomicTime{} // TODO: use this to wait for network stabilisation.
 	lastRequest.Store(time.Now())
-	chromedp.ListenTarget(browserCtx, func(ev any) {
-		switch ev.(type) {
-		case *network.EventRequestWillBeSent:
-			requests.Add(1)
-			lastRequest.Store(time.Now())
-		case *network.EventLoadingFinished, *network.EventLoadingFailed:
-			requests.Add(-1)
-		}
-	})
+	networkListenerCtx, cancelNetworkListener := context.WithCancel(browserCtx)
+	if !cfg.ReadinessDisableNetworkWait {
+		chromedp.ListenTarget(networkListenerCtx, func(ev any) {
+			switch ev.(type) {
+			case *network.EventRequestWillBeSent:
+				requests.Add(1)
+				lastRequest.Store(time.Now())
+			case *network.EventLoadingFinished, *network.EventLoadingFailed:
+				requests.Add(-1)
+			}
+		})
+	}
 
 	return chromedp.ActionFunc(func(ctx context.Context) error {
+		defer cancelNetworkListener()
+
 		tracer := tracer(ctx)
 		ctx, span := tracer.Start(ctx, "waitForReady",
-			trace.WithAttributes(attribute.Float64("timeout_seconds", timeout.Seconds())))
+			trace.WithAttributes(attribute.String("timeout", cfg.ReadinessTimeout.String())))
 		defer span.End()
 
-		timeout := time.After(timeout)
+		start := time.Now()
 
-		hasHadQueries := false
-		giveUpFirstQuery := time.Now().Add(time.Second * 3)
+		var readinessTimeout <-chan time.Time
+		if cfg.ReadinessTimeout > 0 {
+			readinessTimeout = time.After(cfg.ReadinessTimeout)
+		}
+
+		hasSeenAnyQuery := false
 
 		var domHashCode int
 		initialDOMPass := true
@@ -892,57 +929,70 @@ func waitForReady(browserCtx context.Context, timeout time.Duration) chromedp.Ac
 			case <-ctx.Done():
 				span.SetStatus(codes.Error, "context completed before readiness detected")
 				return ctx.Err()
-			case <-timeout:
+			case <-readinessTimeout:
 				span.SetStatus(codes.Error, "timed out waiting for readiness")
 				return fmt.Errorf("timed out waiting for readiness")
-			case <-time.After(100 * time.Millisecond):
+
+			case <-time.After(cfg.ReadinessIterationInterval):
+				// Continue with the rest of the code; this is waiting for the next time we can do work.
 			}
 
-			if requests.Load() > 0 {
+			if !cfg.ReadinessDisableNetworkWait &&
+				(cfg.ReadinessNetworkIdleTimeout <= 0 || time.Since(start) < cfg.ReadinessNetworkIdleTimeout) &&
+				requests.Load() > 0 {
 				initialDOMPass = true
-				span.AddEvent("network requests still ongoing", trace.WithAttributes(attribute.Int64("inflightRequests", requests.Load())))
+				span.AddEvent("network requests still ongoing", trace.WithAttributes(attribute.Int64("inflight_requests", requests.Load())))
 				continue // still waiting on network requests to complete
 			}
 
-			running, err := getRunningQueries(ctx)
-			if err != nil {
-				span.SetStatus(codes.Error, err.Error())
-				return fmt.Errorf("failed to get running queries: %w", err)
-			}
-			span.AddEvent("queried running queries", trace.WithAttributes(attribute.Bool("running", running)))
-			if running {
-				initialDOMPass = true
-				hasHadQueries = true
-				continue // still waiting on queries to complete
-			} else if !hasHadQueries && time.Now().Before(giveUpFirstQuery) {
-				span.AddEvent("no first query detected yet; giving it more time")
-				continue
-			}
-
-			if initialDOMPass {
-				domHashCode, err = getDOMHashCode(ctx)
+			if !cfg.ReadinessDisableQueryWait && (cfg.ReadinessQueriesTimeout <= 0 || time.Since(start) < cfg.ReadinessQueriesTimeout) {
+				running, err := getRunningQueries(ctx)
 				if err != nil {
 					span.SetStatus(codes.Error, err.Error())
-					return fmt.Errorf("failed to get DOM hash code: %w", err)
+					span.RecordError(err)
+					return fmt.Errorf("failed to get running queries: %w", err)
 				}
-				span.AddEvent("initial DOM hash code recorded", trace.WithAttributes(attribute.Int("hashCode", domHashCode)))
-				initialDOMPass = false
-				continue // not stable yet
+				span.AddEvent("queried running queries", trace.WithAttributes(attribute.Bool("running", running)))
+				if running {
+					initialDOMPass = true
+					hasSeenAnyQuery = true
+					continue // still waiting on queries to complete
+				} else if !hasSeenAnyQuery && (cfg.ReadinessFirstQueryTimeout <= 0 || time.Since(start) < cfg.ReadinessFirstQueryTimeout) {
+					span.AddEvent("no first query detected yet; giving it more time")
+					continue
+				}
 			}
 
-			newHashCode, err := getDOMHashCode(ctx)
-			if err != nil {
-				span.SetStatus(codes.Error, err.Error())
-				return fmt.Errorf("failed to get DOM hash code: %w", err)
+			if !cfg.ReadinessDisableDOMHashCodeWait && (cfg.ReadinessDOMHashCodeTimeout <= 0 || time.Since(start) < cfg.ReadinessDOMHashCodeTimeout) {
+				if initialDOMPass {
+					var err error
+					domHashCode, err = getDOMHashCode(ctx)
+					if err != nil {
+						span.SetStatus(codes.Error, err.Error())
+						span.RecordError(err)
+						return fmt.Errorf("failed to get DOM hash code: %w", err)
+					}
+					span.AddEvent("initial DOM hash code recorded", trace.WithAttributes(attribute.Int("hashCode", domHashCode)))
+					initialDOMPass = false
+					continue // not stable yet
+				}
+
+				newHashCode, err := getDOMHashCode(ctx)
+				if err != nil {
+					span.SetStatus(codes.Error, err.Error())
+					span.RecordError(err)
+					return fmt.Errorf("failed to get DOM hash code: %w", err)
+				}
+				span.AddEvent("subsequent DOM hash code recorded", trace.WithAttributes(attribute.Int("hashCode", newHashCode)))
+				if newHashCode != domHashCode {
+					span.AddEvent("DOM hash code changed", trace.WithAttributes(attribute.Int("oldHashCode", domHashCode), attribute.Int("newHashCode", newHashCode)))
+					domHashCode = newHashCode
+					initialDOMPass = true
+					continue // not stable yet
+				}
+				span.AddEvent("DOM hash code stable", trace.WithAttributes(attribute.Int("hashCode", domHashCode)))
 			}
-			span.AddEvent("subsequent DOM hash code recorded", trace.WithAttributes(attribute.Int("hashCode", newHashCode)))
-			if newHashCode != domHashCode {
-				span.AddEvent("DOM hash code changed", trace.WithAttributes(attribute.Int("oldHashCode", domHashCode), attribute.Int("newHashCode", newHashCode)))
-				domHashCode = newHashCode
-				initialDOMPass = true
-				continue // not stable yet
-			}
-			span.AddEvent("DOM hash code stable", trace.WithAttributes(attribute.Int("hashCode", domHashCode)))
+
 			break // we're done!!
 		}
 
@@ -978,6 +1028,7 @@ func tracingAction(name string, action chromedp.Action) chromedp.Action {
 		err := action.Do(ctx)
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
 			return err
 		}
 		span.SetStatus(codes.Ok, "action completed successfully")
