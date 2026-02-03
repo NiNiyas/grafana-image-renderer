@@ -50,8 +50,8 @@ This is a verbatim copy of the output of the `grafana-image-renderer server --he
 ```
 --api.default-encoding=<string> [default: "pdf"] [${API_DEFAULT_ENCODING}]
     The default encoding for render requests when not specified. (values: pdf, png) [config: api.default-encoding]
---browser.flag=<string> / --browser.flags=<string> [${BROWSER_FLAG}]
-    Flags to pass to the browser. These are syntaxed `${flag}` or `${flag}=${value}`. [config: browser.flag]
+--browser.flag=<string> / --browser.flags=<string> [${BROWSER_FLAGS}, ${BROWSER_FLAG}]
+    Flags to pass to the browser. These are syntaxed `--${flag}` or `--${flag}=${value}`. Note the required `--` prefix for each flag. [config: browser.flag]
 --browser.gpu [default: false] [${BROWSER_GPU}]
     Enable GPU support in the browser. [config: browser.gpu]
 --browser.header=<string> / --browser.headers=<string> [${BROWSER_HEADER}]
@@ -102,6 +102,8 @@ This is a verbatim copy of the output of the `grafana-image-renderer server --he
     The time between scroll events when capturing a full-page screenshot. [config: browser.time-between-scrolls]
 --browser.time-zone=<string> / --browser.timezone=<string> / --browser.tz=<string> [default: "Etc/UTC"] [${BROWSER_TIMEZONE}, ${TZ}]
     The timezone for the browser to use, e.g. 'America/New_York'. [config: browser.timezone]
+--browser.user-agent=<string> [${BROWSER_USER_AGENT}]
+    Sets the default User-Agent header for browser requests. If not set, Chromium's default will be used instead. [config: browser.user-agent]
 --browser.ws-url-read-timeout=<duration> [default: 0s] [${BROWSER_WS_URL_READ_TIMEOUT}]
     The timeout for reading the WebSocket URL when connecting to the browser. If <= 0, uses chromedp default (20s). [config: browser.ws-url-read-timeout]
 --help / -h

@@ -346,6 +346,8 @@ type BrowserConfig struct {
 	// WSURLReadTimeout is the timeout for reading the WebSocket URL when connecting to the browser.
 	// If <= 0, the chromedp default (20 seconds) is used.
 	WSURLReadTimeout time.Duration
+	// Sets the default User-Agent header for browser requests. If not set, Chromium's default will be used instead.
+	UserAgent string
 	// TimeZone is the timezone for the browser to use.
 	TimeZone *time.Location // DeepClone: can be copied, because the value should be immutable
 	// Cookies are injected into the browser for every request.
@@ -451,11 +453,11 @@ func BrowserFlags() []cli.Flag {
 			Value:     "chromium",
 			Sources:   FromConfig("browser.path", "BROWSER_PATH"),
 		},
-		&cli.StringSliceFlag{
+		&cli.StringFlag{
 			Name:    "browser.flag",
 			Aliases: []string{"browser.flags"},
-			Usage:   "Flags to pass to the browser. These are syntaxed `${flag}` or `${flag}=${value}`. [config: browser.flag]",
-			Sources: FromConfig("browser.flag", "BROWSER_FLAG"),
+			Usage:   "Flags to pass to the browser. These are syntaxed `--${flag}` or `--${flag}=${value}`. Note the required `--` prefix for each flag. [config: browser.flag]",
+			Sources: FromConfig("browser.flag", "BROWSER_FLAG", "BROWSER_FLAGS"),
 		},
 		&cli.BoolFlag{
 			Name:    "browser.gpu",
@@ -489,6 +491,11 @@ func BrowserFlags() []cli.Flag {
 			Usage:   "The timeout for reading the WebSocket URL when connecting to the browser. If <= 0, uses chromedp default (20s). [config: browser.ws-url-read-timeout]",
 			Value:   0,
 			Sources: FromConfig("browser.ws-url-read-timeout", "BROWSER_WS_URL_READ_TIMEOUT"),
+		},
+		&cli.StringFlag{
+			Name:    "browser.user-agent",
+			Usage:   "Sets the default User-Agent header for browser requests. If not set, Chromium's default will be used instead. [config: browser.user-agent]",
+			Sources: FromConfig("browser.user-agent", "BROWSER_USER_AGENT"),
 		},
 		&cli.StringFlag{
 			Name:    "browser.timezone",
@@ -729,15 +736,16 @@ func BrowserConfigFromCommand(c *cli.Command) (BrowserConfig, error) {
 
 	return BrowserConfig{
 		Path:             c.String("browser.path"),
-		Flags:            c.StringSlice("browser.flag"),
+		Flags:            customParseBrowserFlags(c.String("browser.flag")),
 		GPU:              c.Bool("browser.gpu"),
 		Sandbox:          c.Bool("browser.sandbox"),
 		Namespaced:       c.Bool("browser.namespaced"),
 		WSURLReadTimeout: c.Duration("browser.ws-url-read-timeout"),
+		UserAgent:        c.String("browser.user-agent"),
 		TimeZone:         timeZone,
 		Cookies:          nil,
 		Headers:          headers,
-		
+
 		DefaultRequestConfig:   defaultRequestConfig,
 		RequestConfigOverrides: requestConfigOverrides,
 	}, nil
